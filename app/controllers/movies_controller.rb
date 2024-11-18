@@ -80,15 +80,40 @@ class MoviesController < ApplicationController
         render json: {error: "No available copies left for this movie"}, status: :unprocessable_entity
       end
     
-    rescue ActiveRecord::RecordNotFound => e
+    rescue ActiveRecord::RecordNotFound => e # Find error
       render json: {error: "Record not found: #{e.message}"}, status: :not_found
-    # Exception for problems in ApplicationRecord.transaction
-    rescue ActiveRecord::RecordInvalid => e
+    rescue ActiveRecord::RecordInvalid => e # ApplicationRecord.transaction error
       render json: {error: "Invalid record: #{e.message}"}, status: :unprocessable_entity
-    rescue => e
+    rescue => e # Other errors
       render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
     end
   end
 
-  # TODO: return rental function
+  def return_rental
+    begin
+      user = User.find(params[:user_id])
+      movie = Movie.find(params[:id])
+
+      if user.rented.include?(movie)
+        ApplicationRecord.transaction do
+          movie.available_copies += 1
+          movie.save!
+          # As of now, "rented" shows movies currently in customer possession, however, it would be
+          # beneficial to include a history of rentals as well. That can be justified for security reasons,
+          # product damage assessment, further options on recommendation, etc...
+          user.rented.delete(movie)
+        end
+        render json: { message: "Movie returned successfully", movie: movie }, status: :ok
+      else
+        render json: { error: "Movie not found in user's current rentals" }, status: :not_found
+      end
+
+    rescue ActiveRecord::RecordNotFound => e # Find error
+      render json: { error: "User or movie not found: #{e.message}" }, status: :not_found
+    rescue ActiveRecord::RecordInvalid => e # ApplicationRecord.transaction error
+      render json: { error: "Invalid record: #{e.message}" }, status: :unprocessable_entity
+    rescue => e # Other errors
+      render json: { error: "An unexpected error occurred: #{e.message}" }, status: :internal_server_error
+    end
+  end
 end
