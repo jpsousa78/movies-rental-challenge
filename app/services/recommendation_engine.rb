@@ -5,41 +5,78 @@ class RecommendationEngine
   # LOGIC: Recommendations only work based by genre. That's too limited. We can crossmatch other factors that
   # potentially indicate what constitutes a movie a customer might like, such as duration, director, movie release-dates which could 
   # indicate a preference for image quality, trends based by the period the movie was filmed in, etc.
-  # Another potiential improvement is cross-matching data from users who also had a certain movie as their favorite and suggest
-  # other favorites from the people who also had said movie as their favorite since people are often shown to have similar tastes
-  
-  # PERFORMANCE: Prediction algorithms are known to take a lot of processing time, changing the aforementioned logic could help in some ways
-  # If recommendations by other users' taste are implemented, a much shorter list will be a source of calculations. Limiting for a
-  # specific ammount of users to search from and possibly crossmatching with favorite genres, there could be a much quicker
-  # recommendation feature, allowing the customer to recalculate if they deem it necessary. Of course, ideally recommendations
-  # should work and then there would not be a need to recalculate, but it opens up features like these with time limitations.
+  # However, this means major changes in schemas to be aligned with the product team
 
-  # ERROR HANDLING: Needs failsafes for when requests fails or data is incomplete.
 
+  # Provided that the schema changes are made, here are some optimizations
   def recommendations
-    movie_titles = get_movie_names(@favorite_movies)
-    # The movie objects in @favorite_movies already should already have the attribute 'genre', 
-    # so there would be no need to hit the database to fill the 'genres' variable.
-    # Also, 'genre' is not marked as required, so this might fail if the field is not filled
-    # SCHEMA CHANGE: If you already want to sort by genre, including genres in the 
-    # favorite_movies schema could prove beneficial. Mark 'genre' as null:false in the schema
-    genres = Movie.where(title: movie_titles).pluck(:genre)
-    # This group_by is unnecessary in counting ocurrences of genres amongst the movies
-    # It works but not very efficient, including the sorting
-    common_genres = genres.group_by{ |e| e }.sort_by{ |k, v| -v.length }.map(&:first).take(3)
-    Movie.where(genre: common_genres).order(rating: :desc).limit(10)
+    begin
+      if @favorite_movies.empty?
+        render json: {error: "No favorite movies provided"}, status: :not_found
+      
+      genres = @favorite_movies.map(&:genre) # If genre cannot be required, a '.compact' would exclude empties from the list
+
+      common_genres = genres.each_with_object(Hash.new(0)) {|genre, counts| counts[genre] += 1} # HashMap {genre, count}
+                      .sort_by {|_, count| -count}.first(3).map(&:first)
+
+      Movie.where(genre: common_genres).order(rating: :desc).limit(10)
+
+    rescue ActiveRecord::RecordNotFound => e
+      render json: {error: "Record not found: #{e.message}"}, status: :not_found
+      
+    rescue => e
+      render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
+    end
   end
 
+  # Upon changes in schema, the get_movie function is no longer needed
+  # The following is an implementation based on a previous suggestion of recommending based on shared interests amongst users
 
+  def shared_recommendations
+    begin
+      similar_users = find_similar_users(@favorite_movies)
 
-  private
-  # Upon changes in schema this function is no longer needed
-  def get_movie_names(movies)
-    names = []
-    @favorite_movies.each do |movie|
-      names << movie.title
+      raise "No similar users" if similar_users.empty?
+
+      recommended_movies = get_movies_from_similar_users(similar_users, @favorite_movies)
+
+      raise "No shared recommended movies" if recommended_movies.empty?
+
+      recommended_movies.order(rating: :desc).limit(10)
+
+    rescue => e
+      render json: {error: "Error in generating recommendations: #{e.message}"}, status: :internal_server_error
+    end
+  end
+
+  def find_similar_users(@favorite_movies)
+    
+    other_users = User.where.not(id: @user.id) # For performance's sake, we can put a .limit(n) at the end of this query
+                                               # But for that we would need to determine what would be an effective sample size
+    
+    return [] if other_users.empty?
+    
+    user_similarity = other_users.map do |user|
+      common_movies = (user.favorite_movies & @favorite_movies).size
+      {user: user, common_movie_count: common_movies}
+    end
+    
+    return [] if user_similarity.empty?
+
+    user_similarity.sort_by {|data| -data[:common_movie_count]}.select {|data| data[:common_movie_count] > 0}
+    
+    return [] if user_similarity.empty?
+
+  end
+
+  def get_movies_from_similar_users(similar_users, @favorite_movies)
+    recommended_movies = []
+
+    similar_users.each do |user_data|
+      new_movies = user_data.favorite_movies - @favorite_movies # Ensure the recommendations come with an unseen movie
+      recommended_movies.concat(new_movies)
     end
 
-    return names
+    Movie.where(id: recommended_movies.uniq)
   end
 end

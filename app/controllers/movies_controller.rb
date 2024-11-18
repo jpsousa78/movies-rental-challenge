@@ -1,8 +1,5 @@
 class MoviesController < ApplicationController
-  
-  # ERROR HANDLING: The entire controller needs failsafes for when requests fails or data is incomplete.
-
-  # Could `Movie.all` be potentially dangerous due to the size of the catalog?
+    # Could `Movie.all` be potentially dangerous due to the size of the catalog?
   # If rendering in the frontend becomes an issue, one improvement would be to create a priority queue
   # and index the most relevant movies and genres first with pagination, updating the list with the remaining movies upon request
   def index
@@ -21,7 +18,7 @@ class MoviesController < ApplicationController
       favorite_movies = user.favorites
       
       if favorite_movies.empty?
-        render json: {message: "No favorite movies found for this user"}, status: :ok # Not a failure, just a corner case ocurrence
+        render json: {message: "No favorite movies found for this user"}, status: :ok
       else
         @recommendations = RecommendationEngine.new(favorite_movies).recommendations
         render json: @recommendations, status: :ok
@@ -34,7 +31,7 @@ class MoviesController < ApplicationController
     rescue ActiveRecord::RecordNotFound => e 
       render json: {error: "Record not found: #{e.message}"}, status: :not_found
 
-    rescue => e # Cover other unexpected exceptions
+    rescue => e
       render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
     end
   end
@@ -46,7 +43,7 @@ class MoviesController < ApplicationController
       @rented = user.rented
 
       if @rented.empty?
-        render json: {message: "No rented movies found for this user"}, status: :ok # Not a failure, just a corner case ocurrence
+        render json: {message: "No rented movies found for this user"}, status: :ok
       else
         render json: @rented, status: :ok
       end
@@ -54,37 +51,35 @@ class MoviesController < ApplicationController
     rescue ActiveRecord::RecordNotFound => e
       render json: {error: "User not found: #{e.message}"}, status: :not_found
 
-    rescue => e # Cover other unexpected exceptions
+    rescue => e
       render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
     end
   end
 
   # Does it work asynchronously? If so, migh have trouble when two customers order the same movie
-  # If User.find or Movie.find fail, the following operations create data inconsistency
   def rent
     begin
       user = User.find(params[:user_id])
       movie = Movie.find(params[:id])
 
       if movie.available_copies > 0
-        # According to standard practices on Ruby on rails, ApplicationRecord.transaction unify the success
-        # or failure of multiple dependent operations. Therefore, they all must succeed or every change is
-        # rolled back
+        # Implemented this way because, upon studies on ruby on rails, I found out that the following allow for a rollback
+        # in case any of the operations within the do-end fails.
         ApplicationRecord.transaction do
           movie.available_copies -= 1 # SCHEMA CHANGE: Include a migration in `Movie` to add a clause to forbid negative numbers
           movie.save! # Including '!' to raise invalid record saving in case of wrong data validation
           user.rented << movie
         end
-        render json: {message: "Movie rental successfull", movie: movie}, status: :ok # Not a failure, just a corner case ocurrence
+        render json: {message: "Movie rental successfull", movie: movie}, status: :ok
       else
         render json: {error: "No available copies left for this movie"}, status: :unprocessable_entity
       end
     
-    rescue ActiveRecord::RecordNotFound => e # Find error
+    rescue ActiveRecord::RecordNotFound => e 
       render json: {error: "Record not found: #{e.message}"}, status: :not_found
-    rescue ActiveRecord::RecordInvalid => e # ApplicationRecord.transaction error
+    rescue ActiveRecord::RecordInvalid => e
       render json: {error: "Invalid record: #{e.message}"}, status: :unprocessable_entity
-    rescue => e # Other errors
+    rescue => e
       render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
     end
   end
@@ -108,11 +103,11 @@ class MoviesController < ApplicationController
         render json: { error: "Movie not found in user's current rentals" }, status: :not_found
       end
 
-    rescue ActiveRecord::RecordNotFound => e # Find error
+    rescue ActiveRecord::RecordNotFound => e 
       render json: { error: "User or movie not found: #{e.message}" }, status: :not_found
-    rescue ActiveRecord::RecordInvalid => e # ApplicationRecord.transaction error
+    rescue ActiveRecord::RecordInvalid => e
       render json: { error: "Invalid record: #{e.message}" }, status: :unprocessable_entity
-    rescue => e # Other errors
+    rescue => e
       render json: { error: "An unexpected error occurred: #{e.message}" }, status: :internal_server_error
     end
   end
