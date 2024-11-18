@@ -71,7 +71,7 @@ class MoviesController < ApplicationController
         # or failure of multiple dependent operations. Therefore, they all must succeed or every change is
         # rolled back
         ApplicationRecord.transaction do
-          movie.available_copies -= 1 # Include a migration in `Movie` to add a clause to forbid negative numbers
+          movie.available_copies -= 1 # SCHEMA CHANGE: Include a migration in `Movie` to add a clause to forbid negative numbers
           movie.save! # Including '!' to raise invalid record saving in case of wrong data validation
           user.rented << movie
         end

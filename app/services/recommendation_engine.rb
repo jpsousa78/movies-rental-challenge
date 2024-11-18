@@ -18,13 +18,22 @@ class RecommendationEngine
 
   def recommendations
     movie_titles = get_movie_names(@favorite_movies)
+    # The movie objects in @favorite_movies already should already have the attribute 'genre', 
+    # so there would be no need to hit the database to fill the 'genres' variable.
+    # Also, 'genre' is not marked as required, so this might fail if the field is not filled
+    # SCHEMA CHANGE: If you already want to sort by genre, including genres in the 
+    # favorite_movies schema could prove beneficial. Mark 'genre' as null:false in the schema
     genres = Movie.where(title: movie_titles).pluck(:genre)
+    # This group_by is unnecessary in counting ocurrences of genres amongst the movies
+    # It works but not very efficient, including the sorting
     common_genres = genres.group_by{ |e| e }.sort_by{ |k, v| -v.length }.map(&:first).take(3)
     Movie.where(genre: common_genres).order(rating: :desc).limit(10)
   end
 
-  private
 
+
+  private
+  # Upon changes in schema this function is no longer needed
   def get_movie_names(movies)
     names = []
     @favorite_movies.each do |movie|
