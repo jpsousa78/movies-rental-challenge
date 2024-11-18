@@ -6,34 +6,89 @@ class MoviesController < ApplicationController
   # If rendering in the frontend becomes an issue, one improvement would be to create a priority queue
   # and index the most relevant movies and genres first with pagination, updating the list with the remaining movies upon request
   def index
-    @movies = Movie.all
-    render json: @movies
+    begin
+      @movies = Movie.all
+      render json: @movies, status: :ok
+    rescue => e
+      render json: {error: "An unexpected error occurred retrieving movies: #{e.message}"}, status: :internal_server_error
+    end
   end
 
   # More comments at the RecommendationEngine
   def recommendations
-    favorite_movies = User.find(params[:user_id]).favorites
-    # No error treatment. What if user is not logged in, request fails to fetch or the user has no registered favorite movies?
-    @recommendations = RecommendationEngine.new(favorite_movies).recommendations
-    render json: @recommendations
+    begin
+      user = User.find(params[:user_id])
+      favorite_movies = user.favorites
+      
+      if favorite_movies.empty?
+        render json: {message: "No favorite movies found for this user"}, status: :ok # Not a failure, just a corner case ocurrence
+      else
+        @recommendations = RecommendationEngine.new(favorite_movies).recommendations
+        render json: @recommendations, status: :ok
+      end
+
+    # Raises exceptions for either movies or users not found
+    # If we want to separate them to two unique exceptions we could use "if e.message.include?('User') or ('Movie')"
+    # and respond accordingly. We could also use two separate exception handlers, although not ideal.
+    # In any case, the most important part is in the error message.
+    rescue ActiveRecord::RecordNotFound => e 
+      render json: {error: "Record not found: #{e.message}"}, status: :not_found
+
+    rescue => e # Cover other unexpected exceptions
+      render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
+    end
   end
 
-  # Feature suggestino: implement a token-based authentication method so only customers and admins can see this list (privacy)
+  # Feature suggestion: implement a token-based authentication method so only customers and admins/automations can see this list (privacy)
   def user_rented_movies
-    @rented = User.find(params[:user_id]).rented
-    render json: @rented
+    begin
+      user = User.find(params[:user_id])
+      @rented = user.rented
+
+      if @rented.empty?
+        render json: {message: "No rented movies found for this user"}, status: :ok # Not a failure, just a corner case ocurrence
+      else
+        render json: @rented, status: :ok
+      end
+
+    rescue ActiveRecord::RecordNotFound => e
+      render json: {error: "User not found: #{e.message}"}, status: :not_found
+
+    rescue => e # Cover other unexpected exceptions
+      render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
+    end
   end
 
   # Does it work asynchronously? If so, migh have trouble when two customers order the same movie
   # If User.find or Movie.find fail, the following operations create data inconsistency
   def rent
-    user = User.find(params[:user_id])
-    movie = Movie.find(params[:id])
-    movie.available_copies -= 1 # Does not check if there are available copies
-    movie.save
-    user.rented << movie
-    render json: movie
+    begin
+      user = User.find(params[:user_id])
+      movie = Movie.find(params[:id])
+
+      if movie.available_copies > 0
+        # According to standard practices on Ruby on rails, ApplicationRecord.transaction unify the success
+        # or failure of multiple dependent operations. Therefore, they all must succeed or every change is
+        # rolled back
+        ApplicationRecord.transaction do
+          movie.available_copies -= 1 # Include a migration in `Movie` to add a clause to forbid negative numbers
+          movie.save! # Including '!' to raise invalid record saving in case of wrong data validation
+          user.rented << movie
+        end
+        render json: {message: "Movie rental successfull", movie: movie}, status: :ok # Not a failure, just a corner case ocurrence
+      else
+        render json: {error: "No available copies left for this movie"}, status: :unprocessable_entity
+      end
+    
+    rescue ActiveRecord::RecordNotFound => e
+      render json: {error: "Record not found: #{e.message}"}, status: :not_found
+    # Exception for problems in ApplicationRecord.transaction
+    rescue ActiveRecord::RecordInvalid => e
+      render json: {error: "Invalid record: #{e.message}"}, status: :unprocessable_entity
+    rescue => e
+      render json: {error: "An unexpected error occurred: #{e.message}"}, status: :internal_server_error
+    end
   end
 
-  # No return_movie method??
+  # TODO: return rental function
 end
